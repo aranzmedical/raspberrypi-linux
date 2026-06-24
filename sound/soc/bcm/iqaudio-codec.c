@@ -16,6 +16,8 @@
 
 #include <linux/module.h>
 #include <linux/gpio/consumer.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 
 #include <sound/core.h>
@@ -27,6 +29,7 @@
 #include <linux/acpi.h>
 #include <linux/slab.h>
 #include "../codecs/da7213.h"
+
 
 static int pll_out = DA7213_PLL_FREQ_OUT_90316800;
 
@@ -215,6 +218,7 @@ static int snd_rpi_iqaudio_codec_probe(struct platform_device *pdev)
 
 	if (pdev->dev.of_node) {
 		struct device_node *i2s_node;
+		struct device_node *codec_node;
 		struct snd_soc_card *card = &snd_rpi_iqaudio_codec;
 		struct snd_soc_dai_link *dai = &snd_rpi_iqaudio_codec_dai[0];
 
@@ -225,6 +229,14 @@ static int snd_rpi_iqaudio_codec_probe(struct platform_device *pdev)
 			dai->cpus->of_node = i2s_node;
 			dai->platforms->name = NULL;
 			dai->platforms->of_node = i2s_node;
+
+			/* Allow codec on any i2c bus via audio-codec phandle in DT */
+			codec_node = of_parse_phandle(pdev->dev.of_node, "audio-codec", 0);
+			if (codec_node) {
+				dai->codecs->name = NULL;
+				dai->codecs->of_node = codec_node;
+				of_node_put(codec_node);
+			}
 		}
 
 		if (of_property_read_string(pdev->dev.of_node, "card_name",
@@ -279,5 +291,5 @@ static struct platform_driver snd_rpi_iqaudio_codec_driver = {
 module_platform_driver(snd_rpi_iqaudio_codec_driver);
 
 MODULE_AUTHOR("Gordon Garrity <gordon@iqaudio.com>");
-MODULE_DESCRIPTION("ASoC Driver for IQaudIO CODEC");
+MODULE_DESCRIPTION("ASoC Driver for IQaudIO CODEC on any I2C bus");
 MODULE_LICENSE("GPL v2");
