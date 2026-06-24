@@ -230,7 +230,7 @@ static int snd_rpi_iqaudio_codec_probe(struct platform_device *pdev)
 			dai->platforms->name = NULL;
 			dai->platforms->of_node = i2s_node;
 
-			/* Allow codec on any i2c bus via audio-codec phandle in DT */
+			/* Allow codec on any i2c bus via audio-codec phandle in Device Tree */
 			codec_node = of_parse_phandle(pdev->dev.of_node, "audio-codec", 0);
 			if (codec_node) {
 				dai->codecs->name = NULL;
