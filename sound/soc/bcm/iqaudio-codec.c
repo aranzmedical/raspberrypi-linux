@@ -216,6 +216,9 @@ static int snd_rpi_iqaudio_codec_probe(struct platform_device *pdev)
 
 	snd_rpi_iqaudio_codec.dev = &pdev->dev;
 
+	dev_info(&pdev->dev,
+		"VIPUL snd_rpi_iqaudio_codec_probe called \n");
+
 	if (pdev->dev.of_node) {
 		struct device_node *i2s_node;
 		struct device_node *codec_node;
@@ -260,6 +263,9 @@ static int snd_rpi_iqaudio_codec_probe(struct platform_device *pdev)
 				"snd_soc_register_card() failed: %d\n", ret);
 		return ret;
 	}
+
+	dev_info(&pdev->dev,
+		"VIPUL snd_soc_register_card() success\n");
 
 	return 0;
 }
