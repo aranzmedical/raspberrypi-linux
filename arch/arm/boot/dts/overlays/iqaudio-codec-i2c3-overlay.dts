@@ -33,6 +33,7 @@
             compatible = "iqaudio,iqaudio-codec";
             i2s-controller = <&i2s_clk_consumer>;
             audio-codec = <&da7213>;
+            clocks = <&clocks 38>;
             status = "okay";
             card_name = "RPi Codec Zero";
             dai_name = "Raspberry Pi Codec Zero";
