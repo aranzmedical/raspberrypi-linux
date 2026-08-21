@@ -35,9 +35,6 @@
             audio-codec = <&da7213>;
             clocks = <&clocks 38>;
             status = "okay";
-            card_name = "RPi Codec Zero";
-            dai_name = "Raspberry Pi Codec Zero";
-            dai_stream_name = "Raspberry Pi Codec Zero HiFi";
         };
     };
 };
