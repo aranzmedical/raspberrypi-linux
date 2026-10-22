@@ -214,8 +214,14 @@ static int mmc_mq_init_request(struct blk_mq_tag_set *set, struct request *req,
 	struct mmc_queue *mq = set->driver_data;
 	struct mmc_card *card = mq->card;
 	struct mmc_host *host = card->host;
+	u16 sg_len = mmc_get_max_segments(host);
 
-	mq_rq->sg = mmc_alloc_sg(mmc_get_max_segments(host), GFP_KERNEL);
+	if (!sg_len) {
+		dev_err(mmc_dev(host), "Wrong max_segs assigned\n");
+		return -EINVAL;
+	}
+
+	mq_rq->sg = mmc_alloc_sg(sg_len, GFP_KERNEL);
 	if (!mq_rq->sg)
 		return -ENOMEM;
 
@@ -243,6 +249,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 	enum mmc_issued issued;
 	bool get_card, cqe_retune_ok;
 	blk_status_t ret;
+	bool write;
 
 	if (mmc_card_removed(mq->card)) {
 		req->rq_flags |= RQF_QUIET;
@@ -250,6 +257,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	issue_type = mmc_issue_type(mq, req);
+	write = req_op(req) == REQ_OP_WRITE;
 
 	spin_lock_irq(&mq->lock);
 
@@ -271,7 +279,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 			spin_unlock_irq(&mq->lock);
 			return BLK_STS_RESOURCE;
 		}
-		if (!host->hsq_enabled && host->cqe_enabled && req_op(req) == REQ_OP_WRITE &&
+		if (!host->hsq_enabled && host->cqe_enabled && write &&
 		    mq->pending_writes >= card->max_posted_writes) {
 			spin_unlock_irq(&mq->lock);
 			return BLK_STS_RESOURCE;
@@ -292,7 +300,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 	/* Parallel dispatch of requests is not supported at the moment */
 	mq->busy = true;
 
-	if (req_op(req) == REQ_OP_WRITE)
+	if (write)
 		mq->pending_writes++;
 	mq->in_flight[issue_type] += 1;
 	get_card = (mmc_tot_in_flight(mq) == 1);
@@ -333,7 +341,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 		bool put_card = false;
 
 		spin_lock_irq(&mq->lock);
-		if (req_op(req) == REQ_OP_WRITE)
+		if (write)
 			mq->pending_writes--;
 		mq->in_flight[issue_type] -= 1;
 		if (mmc_tot_in_flight(mq) == 0)
@@ -345,6 +353,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 	} else {
 		WRITE_ONCE(mq->busy, false);
 	}
+	WARN_ON_ONCE(mq->pending_writes < 0);
 
 	return ret;
 }

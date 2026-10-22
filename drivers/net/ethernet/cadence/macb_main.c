@@ -502,6 +502,7 @@ static int macb_mdio_reset(struct mii_bus *bus)
 		gpiod_set_value_cansleep(bp->phy_reset_gpio, 1);
 		msleep(bp->phy_reset_ms);
 		gpiod_set_value_cansleep(bp->phy_reset_gpio, 0);
+		msleep(bp->phy_reset_post_ms);
 	}
 
 	return 0;
@@ -1192,6 +1193,8 @@ static int macb_mii_init(struct macb *bp)
 	if (err)
 		goto err_out_unregister_bus;
 
+	of_node_put(mdio_np);
+
 	return 0;
 
 err_out_unregister_bus:
@@ -1505,8 +1508,6 @@ static int macb_tx_complete(struct macb_queue *queue, int budget)
 				  packets, bytes);
 
 	queue->tx_tail = tail;
-	if (packets)
-		queue->tx_stall_tail_moved = true;
 	if (__netif_subqueue_stopped(bp->dev, queue_index) &&
 	    CIRC_CNT(queue->tx_head, queue->tx_tail,
 		     bp->tx_ring_size) <= MACB_TX_WAKEUP_THRESH(bp))
@@ -1951,12 +1952,13 @@ static void macb_tx_restart(struct macb_queue *queue)
 
 	spin_lock(&bp->lock);
 	macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(TSTART));
-	/* Flush the PCIe posted-write queue so the TSTART doorbell
-	 * reliably reaches the MAC.  Without this, the write can sit
-	 * in the fabric and the MAC never advances, causing a silent
-	 * TX stall.
+	/* On PCIe-attached parts, flush the posted-write queue so the
+	 * TSTART doorbell reliably reaches the MAC.  Without this the
+	 * write can sit in the fabric and the MAC never advances,
+	 * causing a silent TX stall.
 	 */
-	(void)macb_readl(bp, NCR);
+	if (bp->caps & MACB_CAPS_PCIE_POSTED_WRITES)
+		(void)macb_readl(bp, NCR);
 	spin_unlock(&bp->lock);
 
 out_tx_ptr_unlock:
@@ -2001,24 +2003,17 @@ static int macb_tx_poll(struct napi_struct *napi, int budget)
 	if (work_done < budget && napi_complete_done(napi, work_done)) {
 		queue_writel(queue, IER, MACB_BIT(TCOMP));
 
-		/* TCOMP events that fire while the interrupt is masked do
-		 * not re-fire when IER is re-enabled.  Catch this two ways
-		 * to avoid losing a wakeup:
-		 *
-		 *   (1) Read ISR -- catches completions the hardware flagged
-		 *       but that we did not see as an interrupt.  The MMIO
-		 *       read doubles as a PCIe read barrier, flushing any
-		 *       in-flight descriptor TX_USED DMA writes into memory.
-		 *   (2) macb_tx_complete_pending() inspects the ring after
-		 *       that flush, catching a descriptor whose TX_USED is
-		 *       now visible as a result of the barrier.
-		 *
-		 * This can race with the interrupt handler taking the same
-		 * path if an interrupt fires just after the IER write;
-		 * rescheduling NAPI in that case is harmless.
+		/* Packet completions only seem to propagate to raise
+		 * interrupts when interrupts are enabled at the time, so if
+		 * packets were sent while interrupts were disabled,
+		 * they will not cause another interrupt to be generated when
+		 * interrupts are re-enabled.
+		 * Check for this case here to avoid losing a wakeup. This can
+		 * potentially race with the interrupt handler doing the same
+		 * actions if an interrupt is raised just after enabling them,
+		 * but this should be harmless.
 		 */
-		if ((queue_readl(queue, ISR) & MACB_BIT(TCOMP)) ||
-		    macb_tx_complete_pending(queue)) {
+		if (macb_tx_complete_pending(queue)) {
 			queue_writel(queue, IDR, MACB_BIT(TCOMP));
 			if (bp->caps & MACB_CAPS_ISR_CLEAR_ON_WRITE)
 				queue_writel(queue, ISR, MACB_BIT(TCOMP));
@@ -2028,63 +2023,6 @@ static int macb_tx_poll(struct napi_struct *napi, int budget)
 	}
 
 	return work_done;
-}
-
-#define MACB_TX_STALL_INTERVAL_MS	1000
-
-/* TX stall watchdog.
- *
- * Defence-in-depth against lost TCOMP interrupts.  macb already has a
- * recovery chain (tx_pending -> txubr_pending -> macb_tx_restart())
- * that fires on TCOMP; if TCOMP itself is lost the TX ring stalls
- * silently until something else kicks TSTART.  This watchdog runs
- * once per second per queue and calls macb_tx_restart() if the ring
- * is non-empty and tx_tail has not advanced since the previous tick.
- *
- * Movement is tracked via the tx_stall_tail_moved boolean rather
- * than by snapshotting tx_tail.  Per-queue ring indices are bounded
- * (and reused), so a snapshot comparison can false-positive when the
- * index happens to land on the same value between two ticks under
- * sustained load.  The boolean is set by macb_tx_complete() whenever
- * tx_tail advances and cleared by this watchdog after each tick;
- * both writes are under tx_ptr_lock, so no atomic is required.
- *
- * macb_tx_restart() already checks the hardware's TBQP against the
- * driver's head index before re-asserting TSTART, so on a healthy
- * ring this is a no-op at the hardware level.  The watchdog only
- * adds the missing trigger.
- */
-static void macb_tx_stall_watchdog(struct work_struct *work)
-{
-	struct macb_queue *queue = container_of(to_delayed_work(work),
-						struct macb_queue,
-						tx_stall_watchdog_work);
-	struct macb *bp = queue->bp;
-	unsigned int cur_tail, cur_head;
-	bool stalled = false;
-	unsigned long flags;
-
-	if (!netif_running(bp->dev))
-		return;
-
-	spin_lock_irqsave(&queue->tx_ptr_lock, flags);
-	cur_tail = queue->tx_tail;
-	cur_head = queue->tx_head;
-	if (cur_head != cur_tail && !queue->tx_stall_tail_moved)
-		stalled = true;
-	queue->tx_stall_tail_moved = false;
-	spin_unlock_irqrestore(&queue->tx_ptr_lock, flags);
-
-	if (stalled) {
-		netdev_warn_once(bp->dev,
-				 "TX stall detected on queue %u (tail=%u head=%u); re-kicking TSTART\n",
-				 (unsigned int)(queue - bp->queues),
-				 cur_tail, cur_head);
-		macb_tx_restart(queue);
-	}
-
-	schedule_delayed_work(&queue->tx_stall_watchdog_work,
-			      msecs_to_jiffies(MACB_TX_STALL_INTERVAL_MS));
 }
 
 static void macb_hresp_error_task(struct work_struct *work)
@@ -2222,10 +2160,7 @@ static irqreturn_t macb_interrupt(int irq, void *dev_id)
 			if (bp->caps & MACB_CAPS_ISR_CLEAR_ON_WRITE)
 				queue_writel(queue, ISR, MACB_BIT(RCOMP));
 
-			if (napi_schedule_prep(&queue->napi_rx)) {
-				netdev_vdbg(bp->dev, "scheduling RX softirq\n");
-				__napi_schedule(&queue->napi_rx);
-			}
+			napi_schedule(&queue->napi_rx);
 		}
 
 		if (status & (MACB_BIT(TCOMP) |
@@ -2241,10 +2176,7 @@ static irqreturn_t macb_interrupt(int irq, void *dev_id)
 				wmb(); // ensure softirq can see update
 			}
 
-			if (napi_schedule_prep(&queue->napi_tx)) {
-				netdev_vdbg(bp->dev, "scheduling TX softirq\n");
-				__napi_schedule(&queue->napi_tx);
-			}
+			napi_schedule(&queue->napi_tx);
 		}
 
 		if (unlikely(status & (MACB_TX_ERR_FLAGS))) {
@@ -2702,10 +2634,12 @@ static netdev_tx_t macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		queue->tx_pending = 1;
 
 	macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(TSTART));
-	/* Flush the PCIe posted-write queue; see the comment in
-	 * macb_tx_restart() for the reasoning.
+	/* Flush PCIe posted-write queue; see comment in macb_tx_restart().
+	 * Also flushes the preceding macb_tx_lpi_wake() NCR write and the
+	 * TSR-read tx_pending breadcrumb above.
 	 */
-	(void)macb_readl(bp, NCR);
+	if (bp->caps & MACB_CAPS_PCIE_POSTED_WRITES)
+		(void)macb_readl(bp, NCR);
 	spin_unlock(&bp->lock);
 
 	if (CIRC_SPACE(queue->tx_head, queue->tx_tail, bp->tx_ring_size) < 1)
@@ -2814,8 +2748,25 @@ static void macb_free_consistent(struct macb *bp)
 	dma_free_coherent(dev, size, bp->queues[0].rx_ring, bp->queues[0].rx_ring_dma);
 
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
-		kfree(queue->tx_skb);
-		queue->tx_skb = NULL;
+		if (queue->tx_skb) {
+			unsigned int dropped = 0, tail;
+
+			for (tail = queue->tx_tail; tail != queue->tx_head;
+			     tail++) {
+				if (macb_tx_skb(queue, tail)->skb)
+					dropped++;
+				macb_tx_unmap(bp, macb_tx_skb(queue, tail), 0);
+			}
+
+			queue->stats.tx_dropped += dropped;
+			bp->dev->stats.tx_dropped += dropped;
+
+			kfree(queue->tx_skb);
+			queue->tx_skb = NULL;
+		}
+
+		queue->tx_head = 0;
+		queue->tx_tail = 0;
 		queue->tx_ring = NULL;
 		queue->rx_ring = NULL;
 	}
@@ -2875,14 +2826,24 @@ static int macb_alloc_consistent(struct macb *bp)
 
 	size = bp->num_queues * macb_tx_ring_size_per_queue(bp);
 	tx = dma_alloc_coherent(dev, size, &tx_dma, GFP_KERNEL);
-	if (!tx || upper_32_bits(tx_dma) != upper_32_bits(tx_dma + size - 1))
+	if (!tx)
+		goto out_err;
+	/* Record the buffer so that the error path frees it. */
+	bp->queues[0].tx_ring = tx;
+	bp->queues[0].tx_ring_dma = tx_dma;
+	if (upper_32_bits(tx_dma) != upper_32_bits(tx_dma + size - 1))
 		goto out_err;
 	netdev_dbg(bp->dev, "Allocated %zu bytes for %u TX rings at %08lx (mapped %p)\n",
 		   size, bp->num_queues, (unsigned long)tx_dma, tx);
 
 	size = bp->num_queues * macb_rx_ring_size_per_queue(bp);
 	rx = dma_alloc_coherent(dev, size, &rx_dma, GFP_KERNEL);
-	if (!rx || upper_32_bits(rx_dma) != upper_32_bits(rx_dma + size - 1))
+	if (!rx)
+		goto out_err;
+	/* Record the buffer so that the error path frees it. */
+	bp->queues[0].rx_ring = rx;
+	bp->queues[0].rx_ring_dma = rx_dma;
+	if (upper_32_bits(rx_dma) != upper_32_bits(rx_dma + size - 1))
 		goto out_err;
 	netdev_dbg(bp->dev, "Allocated %zu bytes for %u RX rings at %08lx (mapped %p)\n",
 		   size, bp->num_queues, (unsigned long)rx_dma, rx);
@@ -3353,14 +3314,11 @@ static int macb_open(struct net_device *dev)
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
 		napi_enable(&queue->napi_rx);
 		napi_enable(&queue->napi_tx);
-		queue->tx_stall_tail_moved = true;
-		schedule_delayed_work(&queue->tx_stall_watchdog_work,
-				      msecs_to_jiffies(MACB_TX_STALL_INTERVAL_MS));
 	}
 
 	macb_init_hw(bp);
 
-	err = phy_power_on(bp->sgmii_phy);
+	err = phy_power_on(bp->phy);
 	if (err)
 		goto reset_hw;
 
@@ -3376,7 +3334,7 @@ static int macb_open(struct net_device *dev)
 	return 0;
 
 phy_off:
-	phy_power_off(bp->sgmii_phy);
+	phy_power_off(bp->phy);
 
 reset_hw:
 	macb_reset_hw(bp);
@@ -3402,7 +3360,6 @@ static int macb_close(struct net_device *dev)
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
 		napi_disable(&queue->napi_rx);
 		napi_disable(&queue->napi_tx);
-		cancel_delayed_work_sync(&queue->tx_stall_watchdog_work);
 		netdev_tx_reset_queue(netdev_get_tx_queue(dev, q));
 	}
 
@@ -3411,7 +3368,7 @@ static int macb_close(struct net_device *dev)
 	phylink_stop(bp->phylink);
 	phylink_disconnect_phy(bp->phylink);
 
-	phy_power_off(bp->sgmii_phy);
+	phy_power_off(bp->phy);
 
 	spin_lock_irqsave(&bp->lock, flags);
 	macb_reset_hw(bp);
@@ -4749,6 +4706,13 @@ static int macb_setup_tc(struct net_device *dev, enum tc_setup_type type,
 	}
 }
 
+static void macb_tx_timeout(struct net_device *dev, unsigned int q)
+{
+	struct macb *bp = netdev_priv(dev);
+
+	macb_tx_restart(&bp->queues[q]);
+}
+
 static const struct net_device_ops macb_netdev_ops = {
 	.ndo_open		= macb_open,
 	.ndo_stop		= macb_close,
@@ -4767,6 +4731,7 @@ static const struct net_device_ops macb_netdev_ops = {
 	.ndo_hwtstamp_set	= macb_hwtstamp_set,
 	.ndo_hwtstamp_get	= macb_hwtstamp_get,
 	.ndo_setup_tc		= macb_setup_tc,
+	.ndo_tx_timeout		= macb_tx_timeout,
 };
 
 /* Configure peripheral capabilities according to device tree
@@ -4962,7 +4927,7 @@ static int macb_init(struct platform_device *pdev)
 		queue->bp = bp;
 		spin_lock_init(&queue->tx_ptr_lock);
 		netif_napi_add(dev, &queue->napi_rx, macb_rx_poll);
-		netif_napi_add(dev, &queue->napi_tx, macb_tx_poll);
+		netif_napi_add_tx(dev, &queue->napi_tx, macb_tx_poll);
 		if (hw_q) {
 			queue->ISR  = GEM_ISR(hw_q - 1);
 			queue->IER  = GEM_IER(hw_q - 1);
@@ -5001,8 +4966,6 @@ static int macb_init(struct platform_device *pdev)
 		}
 
 		INIT_WORK(&queue->tx_error_task, macb_tx_error_task);
-		INIT_DELAYED_WORK(&queue->tx_stall_watchdog_work,
-				  macb_tx_stall_watchdog);
 		q++;
 	}
 
@@ -5604,13 +5567,13 @@ static int init_reset_optional(struct platform_device *pdev)
 
 	if (bp->phy_interface == PHY_INTERFACE_MODE_SGMII) {
 		/* Ensure PHY device used in SGMII mode is ready */
-		bp->sgmii_phy = devm_phy_optional_get(&pdev->dev, NULL);
+		bp->phy = devm_phy_optional_get(&pdev->dev, NULL);
 
-		if (IS_ERR(bp->sgmii_phy))
-			return dev_err_probe(&pdev->dev, PTR_ERR(bp->sgmii_phy),
+		if (IS_ERR(bp->phy))
+			return dev_err_probe(&pdev->dev, PTR_ERR(bp->phy),
 					     "failed to get SGMII PHY\n");
 
-		ret = phy_init(bp->sgmii_phy);
+		ret = phy_init(bp->phy);
 		if (ret)
 			return dev_err_probe(&pdev->dev, ret,
 					     "failed to init SGMII PHY\n");
@@ -5639,7 +5602,7 @@ static int init_reset_optional(struct platform_device *pdev)
 	/* Fully reset controller at hardware level if mapped in device tree */
 	ret = device_reset_optional(&pdev->dev);
 	if (ret) {
-		phy_exit(bp->sgmii_phy);
+		phy_exit(bp->phy);
 		return dev_err_probe(&pdev->dev, ret, "failed to reset controller");
 	}
 
@@ -5647,7 +5610,7 @@ static int init_reset_optional(struct platform_device *pdev)
 
 err_out_phy_exit:
 	if (ret)
-		phy_exit(bp->sgmii_phy);
+		phy_exit(bp->phy);
 
 	return ret;
 }
@@ -5810,6 +5773,7 @@ static const struct macb_config raspberrypi_rp1_config = {
 	.caps = MACB_CAPS_GIGABIT_MODE_AVAILABLE | MACB_CAPS_CLK_HW_CHG |
 		MACB_CAPS_JUMBO |
 		MACB_CAPS_GEM_HAS_PTP |
+		MACB_CAPS_PCIE_POSTED_WRITES |
 		MACB_CAPS_EEE,
 	.dma_burst_length = 16,
 	.clk_init = macb_clk_init,
@@ -5977,6 +5941,7 @@ static int macb_probe(struct platform_device *pdev)
 
 	spin_lock_init(&bp->lock);
 	spin_lock_init(&bp->stats_lock);
+	spin_lock_init(&bp->tsu_clk_lock);
 
 	/* setup capabilities */
 	macb_configure_caps(bp, macb_config);
@@ -6050,6 +6015,12 @@ static int macb_probe(struct platform_device *pdev)
 	if (bp->phy_reset_ms > 1000)
 		bp->phy_reset_ms = 1000;
 
+	bp->phy_reset_post_ms = 0;
+	of_property_read_u32(np, "phy-reset-post-delay", &bp->phy_reset_post_ms);
+	/* A sane post-reset delay should not be longer than 1s */
+	if (bp->phy_reset_post_ms > 1000)
+		bp->phy_reset_post_ms = 1000;
+
 	/* IP specific init */
 	err = init(pdev);
 	if (err)
@@ -6080,11 +6051,14 @@ static int macb_probe(struct platform_device *pdev)
 	return 0;
 
 err_out_unregister_mdio:
-	mdiobus_unregister(bp->mii_bus);
-	mdiobus_free(bp->mii_bus);
+	if (bp->mii_bus) {
+		mdiobus_unregister(bp->mii_bus);
+		mdiobus_free(bp->mii_bus);
+	}
+	phylink_destroy(bp->phylink);
 
 err_out_phy_exit:
-	phy_exit(bp->sgmii_phy);
+	phy_exit(bp->phy);
 
 err_out_free_netdev:
 	free_netdev(dev);
@@ -6108,9 +6082,11 @@ static void macb_remove(struct platform_device *pdev)
 	if (dev) {
 		bp = netdev_priv(dev);
 		unregister_netdev(dev);
-		phy_exit(bp->sgmii_phy);
-		mdiobus_unregister(bp->mii_bus);
-		mdiobus_free(bp->mii_bus);
+		phy_exit(bp->phy);
+		if (bp->mii_bus) {
+			mdiobus_unregister(bp->mii_bus);
+			mdiobus_free(bp->mii_bus);
+		}
 
 		device_set_wakeup_enable(&bp->pdev->dev, 0);
 		cancel_delayed_work_sync(&bp->tx_lpi_work);
@@ -6136,7 +6112,7 @@ static int __maybe_unused macb_suspend(struct device *dev)
 	int err;
 
 	if (!device_may_wakeup(&bp->dev->dev))
-		phy_exit(bp->sgmii_phy);
+		phy_exit(bp->phy);
 
 	if (!netif_running(netdev))
 		return 0;
@@ -6274,7 +6250,7 @@ static int __maybe_unused macb_resume(struct device *dev)
 	int err;
 
 	if (!device_may_wakeup(&bp->dev->dev))
-		phy_init(bp->sgmii_phy);
+		phy_init(bp->phy);
 
 	if (!netif_running(netdev))
 		return 0;

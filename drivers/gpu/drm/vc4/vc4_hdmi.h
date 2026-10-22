@@ -151,7 +151,6 @@ struct vc4_hdmi {
 	 */
 	bool disable_wifi_frequencies;
 
-	struct cec_adapter *cec_adap;
 	struct cec_msg cec_rx_msg;
 	bool cec_tx_ok;
 	bool cec_irq_was_rx;
@@ -191,12 +190,6 @@ struct vc4_hdmi {
 	 * for use by ALSA hooks and interrupt handlers. Protected by @mutex.
 	 */
 	struct drm_display_mode saved_adjusted_mode;
-
-	/**
-	 * @packet_ram_enabled: Is the HDMI controller packet RAM currently
-	 * on? Protected by @mutex.
-	 */
-	bool packet_ram_enabled;
 
 	/**
 	 * @scdc_enabled: Is the HDMI controller currently running with

@@ -60,8 +60,12 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	dpi18cpadhi.dtbo \
 	dpi24.dtbo \
 	draws.dtbo \
+	draws-pi5.dtbo \
 	dwc-otg-deprecated.dtbo \
 	dwc2.dtbo \
+	ed-backlight-pwm.dtbo \
+	ed-backlight-pwm-pi5.dtbo \
+	ed-ipc.dtbo \
 	edt-ft5406.dtbo \
 	enc28j60.dtbo \
 	enc28j60-spi2.dtbo \
@@ -74,6 +78,8 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	ghost-amp.dtbo \
 	goodix.dtbo \
 	googlevoicehat-soundcard.dtbo \
+	gpclk.dtbo \
+	gpclk-pi5.dtbo \
 	gpio-charger.dtbo \
 	gpio-fan.dtbo \
 	gpio-hog.dtbo \
@@ -107,6 +113,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	hifiberry-digi-pro.dtbo \
 	hifiberry-studio-dac8x.dtbo \
 	hifiberry-studio-dac8x-pro.dtbo \
+	hifiberry-studio-digi.dtbo \
 	highperi.dtbo \
 	hy28a.dtbo \
 	hy28b.dtbo \
@@ -142,6 +149,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	imx296.dtbo \
 	imx327.dtbo \
 	imx335.dtbo \
+	imx355.dtbo \
 	imx378.dtbo \
 	imx415.dtbo \
 	imx462.dtbo \
@@ -149,6 +157,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	imx500.dtbo \
 	imx500-pi5.dtbo \
 	imx519.dtbo \
+	imx662.dtbo \
 	imx708.dtbo \
 	interludeaudio-analog.dtbo \
 	interludeaudio-digital.dtbo \
@@ -232,6 +241,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	proto-codec.dtbo \
 	pwm.dtbo \
 	pwm-2chan.dtbo \
+	pwm-fan.dtbo \
 	pwm-gpio.dtbo \
 	pwm-gpio-fan.dtbo \
 	pwm-ir-tx.dtbo \
@@ -241,8 +251,10 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	qca7000-uart0.dtbo \
 	ramoops.dtbo \
 	ramoops-pi4.dtbo \
+	ramoops-pi5.dtbo \
 	rootmaster.dtbo \
 	rotary-encoder.dtbo \
+	rp1-pio-uart.dtbo \
 	rpi-backlight.dtbo \
 	rpi-codeczero.dtbo \
 	rpi-dacplus.dtbo \
@@ -258,6 +270,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	rpi-sense-v2.dtbo \
 	rpi-tv.dtbo \
 	rra-digidac1-wm8741-audio.dtbo \
+	rt5616.dtbo \
 	sainsmart18.dtbo \
 	sc16is750-i2c.dtbo \
 	sc16is752-i2c.dtbo \
@@ -269,6 +282,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	seeed-can-fd-hat-v2.dtbo \
 	sh1106-spi.dtbo \
 	si446x-spi0.dtbo \
+	sixfab_m1m.dtbo \
 	smi.dtbo \
 	smi-dev.dtbo \
 	smi-nand.dtbo \
@@ -304,6 +318,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	ssd1327-spi.dtbo \
 	ssd1331-spi.dtbo \
 	ssd1351-spi.dtbo \
+	starvis2.dtbo \
 	sunfounder-pipower3.dtbo \
 	sunfounder-pironman5.dtbo \
 	superaudioboard.dtbo \
@@ -337,6 +352,8 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	vc4-kms-dpi-hyperpixel4sq.dtbo \
 	vc4-kms-dpi-panel.dtbo \
 	vc4-kms-dsi-7inch.dtbo \
+	vc4-kms-dsi-edatec-panel-070c.dtbo \
+	vc4-kms-dsi-edatec-panel-101c.dtbo \
 	vc4-kms-dsi-generic.dtbo \
 	vc4-kms-dsi-ili79600-10-1inch.dtbo \
 	vc4-kms-dsi-ili9881-5inch.dtbo \

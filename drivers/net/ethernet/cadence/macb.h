@@ -793,6 +793,10 @@
 #define MACB_CAPS_QUEUE_DISABLE			0x00000800
 #define MACB_CAPS_QBV				0x00001000
 #define MACB_CAPS_EEE				0x00002000
+/* Register writes are posted on the parent fabric and need a non-posted
+ * read-back to guarantee delivery.  Currently set only on RP1.
+ */
+#define MACB_CAPS_PCIE_POSTED_WRITES		0x00004000
 #define MACB_CAPS_PCS				0x01000000
 #define MACB_CAPS_HIGH_SPEED			0x02000000
 #define MACB_CAPS_CLK_HW_CHG			0x04000000
@@ -1294,17 +1298,6 @@ struct macb_queue {
 	struct work_struct	tx_error_task;
 	bool			txubr_pending;
 	bool			tx_pending;
-
-	/* TX stall watchdog -- see macb_tx_stall_watchdog() in macb_main.c.
-	 * tx_stall_tail_moved is set by macb_tx_complete() under tx_ptr_lock
-	 * whenever tx_tail advances, and cleared by the watchdog tick on the
-	 * same lock.  A bool avoids the index-aliasing false-positive that a
-	 * snapshot-of-tx_tail comparison would have when the ring index space
-	 * happens to wrap to the same value between two ticks.
-	 */
-	struct delayed_work	tx_stall_watchdog_work;
-	bool			tx_stall_tail_moved;
-
 	struct napi_struct	napi_tx;
 
 	dma_addr_t		rx_ring_dma;
@@ -1380,6 +1373,7 @@ struct macb {
 
 	struct gpio_desc	*phy_reset_gpio;
 	int			phy_reset_ms;
+	int			phy_reset_post_ms;
 
 	/* AT91RM9200 transmit queue (1 on wire + 1 queued) */
 	struct macb_tx_skb	rm9200_txq[2];
@@ -1398,7 +1392,7 @@ struct macb {
 
 	struct macb_ptp_info	*ptp_info;	/* macb-ptp interface */
 
-	struct phy		*sgmii_phy;	/* for ZynqMP SGMII mode */
+	struct phy		*phy;
 
 #ifdef MACB_EXT_DESC
 	uint8_t hw_dma_cap;

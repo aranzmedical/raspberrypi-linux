@@ -53,8 +53,37 @@
 		bcm2712;
 	};
 
+	draws {
+		bcm2835;
+		bcm2711;
+		bcm2712 = "draws-pi5";
+	};
+
+	draws-pi5 {
+		bcm2712;
+	};
+
+	ed-backlight-pwm {
+		bcm2711;
+		bcm2712 = "ed-backlight-pwm-pi5";
+	};
+
+	ed-backlight-pwm-pi5 {
+		bcm2712;
+	};
+
 	dwc-otg {
 		renamed = "dwc-otg-deprecated";
+	};
+
+	gpclk {
+		bcm2835;
+		bcm2711;
+		bcm2712 = "gpclk-pi5";
+	};
+
+	gpclk-pi5 {
+		bcm2712;
 	};
 
 	hifiberry-adc8x {
@@ -210,6 +239,10 @@
 		deprecated = "use i2c-sensor,mpu6050";
 	};
 
+	nospi10 {
+		bcm2712;
+	};
+
 	pcie-32bit-dma {
 		bcm2711;
 		bcm2712 = "pcie-32bit-dma-pi5";
@@ -260,11 +293,14 @@
 	ramoops {
 		bcm2835;
 		bcm2711 = "ramoops-pi4";
-		bcm2712 = "ramoops-pi4";
+		bcm2712 = "ramoops-pi5";
 	};
 
 	ramoops-pi4 {
 		bcm2711;
+	};
+
+	ramoops-pi5 {
 		bcm2712;
 	};
 

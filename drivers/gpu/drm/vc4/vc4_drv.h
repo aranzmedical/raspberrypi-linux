@@ -339,6 +339,12 @@ struct vc4_hvs {
 	struct clk *core_clk;
 	struct clk *disp_clk;
 
+	/* Last min rate requested on core_clk and disp_clk. Each
+	 * clk_set_min_rate() on a firmware clock costs at least one
+	 * mailbox round-trip, so skip requests that wouldn't change it.
+	 */
+	unsigned long core_clk_min_rate;
+
 	struct {
 		unsigned int desc;
 		unsigned int enabled: 1;
@@ -458,6 +464,11 @@ struct vc4_plane_state {
 	 * workaround
 	 */
 	bool is_yuv444_unity;
+
+	/* Skip lines on large downscales to avoid consuming too much SDRAM
+	 * bandwidth
+	 */
+	unsigned int vdownsample;
 
 	/* Our allocation in LBM for temporary storage during scaling. */
 	unsigned int lbm_handle;
@@ -1111,7 +1122,7 @@ void vc4_plane_async_set_fb(struct drm_plane *plane,
 /* vc4_v3d.c */
 extern struct platform_driver vc4_v3d_driver;
 extern const struct of_device_id vc4_v3d_dt_match[];
-int vc4_v3d_get_bin_slot(struct vc4_dev *vc4);
+int vc4_v3d_get_bin_slot(struct vc4_dev *vc4, long timeout);
 int vc4_v3d_bin_bo_get(struct vc4_dev *vc4, bool *used);
 void vc4_v3d_bin_bo_put(struct vc4_dev *vc4);
 int vc4_v3d_pm_get(struct vc4_dev *vc4);

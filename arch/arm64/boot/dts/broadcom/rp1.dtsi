@@ -930,7 +930,7 @@
 			};
 
 			rp1_spi0_cs_gpio7: rp1_spi0_cs_gpio7 {
-				function = "spi0";
+				function = "gpio";
 				pins = "gpio7", "gpio8";
 				bias-pull-up;
 			};
@@ -984,7 +984,7 @@
 			};
 
 			rp1_spi8_cs_gpio52: rp1_spi8_cs_gpio52 {
-				function = "spi0";
+				function = "gpio";
 				pins = "gpio52", "gpio53";
 				bias-pull-up;
 			};
@@ -1057,6 +1057,8 @@
 			reg = <0xc0 0x40178000  0x0 0x20>;
 			compatible = "raspberrypi,rp1-pio";
 			firmware = <&rp1_firmware>;
+			interrupts = <RP1_INT_PIO_0 IRQ_TYPE_EDGE_RISING>,
+				     <RP1_INT_PIO_1 IRQ_TYPE_EDGE_RISING>;
 			dmas = <&rp1_dma RP1_DMA_PIO_CH0_TX>, <&rp1_dma RP1_DMA_PIO_CH0_RX>,
 				   <&rp1_dma RP1_DMA_PIO_CH1_TX>, <&rp1_dma RP1_DMA_PIO_CH1_RX>,
 				   <&rp1_dma RP1_DMA_PIO_CH2_TX>, <&rp1_dma RP1_DMA_PIO_CH2_RX>,
@@ -1124,7 +1126,6 @@
 			snps,dis_rxdet_inp3_quirk;
 			snps,enhanced-nak-fs-quirk;
 			snps,parkmode-disable-ss-quirk;
-			snps,parkmode-disable-hs-quirk;
 			snps,parkmode-disable-fsls-quirk;
 			snps,tx-max-burst = /bits/ 8 <8>;
 			snps,tx-thr-num-pkt = /bits/ 8 <2>;
@@ -1141,7 +1142,6 @@
 			snps,dis_rxdet_inp3_quirk;
 			snps,enhanced-nak-fs-quirk;
 			snps,parkmode-disable-ss-quirk;
-			snps,parkmode-disable-hs-quirk;
 			snps,parkmode-disable-fsls-quirk;
 			snps,tx-max-burst = /bits/ 8 <8>;
 			snps,tx-thr-num-pkt = /bits/ 8 <2>;
